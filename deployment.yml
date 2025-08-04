@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: trend
-        image: <your-dockerhub-username>/trend-app:latest  # Replace with your DockerHub image
+        image: docker.io/kalaiyarasi15/trend-app:latest   # ✅ Your DockerHub image
         ports:
         - containerPort: 3000
 ---
@@ -29,5 +29,6 @@ spec:
   selector:
     app: trend
   ports:
-    - port: 80
+    - protocol: TCP
+      port: 80
       targetPort: 3000
