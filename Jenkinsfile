@@ -2,13 +2,11 @@ pipeline {
     agent any
 
     environment {
-        KUBECONFIG = "/var/lib/jenkins/.kube/config"  // Path to kubeconfig for EKS
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
-        AWS_DEFAULT_REGION = "ap-south-1"
+        KUBECONFIG = credentials('eks-kubeconfig')
     }
 
     stages {
-
         stage('Checkout Code') {
             steps {
                 git branch: 'main', url: 'https://github.com/kalaiyarasi1511/Trend'
@@ -18,9 +16,7 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    sh '''
-                    docker build -t ${DOCKERHUB_CREDENTIALS_USR}/trend-app:latest .
-                    '''
+                    sh 'docker build -t kalaiyarasi15/trend-app:latest .'
                 }
             }
         }
@@ -28,10 +24,10 @@ pipeline {
         stage('Push to DockerHub') {
             steps {
                 script {
-                    sh '''
+                    sh """
                     echo ${DOCKERHUB_CREDENTIALS_PSW} | docker login -u ${DOCKERHUB_CREDENTIALS_USR} --password-stdin
-                    docker push ${DOCKERHUB_CREDENTIALS_USR}/trend-app:latest
-                    '''
+                    docker push kalaiyarasi15/trend-app:latest
+                    """
                 }
             }
         }
@@ -39,25 +35,21 @@ pipeline {
         stage('Deploy to EKS') {
             steps {
                 script {
-                    sh '''
+                    sh """
                     kubectl get nodes
-                    kubectl apply -f k8s-deployment.yaml
-                    kubectl apply -f k8s-service.yaml
-                    '''
+                    kubectl apply -f deployment.yml
+                    """
                 }
             }
         }
     }
 
     post {
-        always {
-            echo "Pipeline completed."
+        success {
+            echo 'Pipeline completed successfully!'
         }
         failure {
-            echo "Pipeline failed!"
-        }
-        success {
-            echo "Pipeline executed successfully!"
+            echo 'Pipeline failed!'
         }
     }
 }
