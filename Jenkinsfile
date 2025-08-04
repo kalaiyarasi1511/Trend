@@ -2,31 +2,36 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds') // Jenkins credentials ID
-        DOCKER_IMAGE = "kalaiyarasi15/trend-app:latest"
-        KUBECONFIG_CREDENTIALS = credentials('eks-kubeconfig') // Jenkins kubeconfig secret
+        KUBECONFIG = "/var/lib/jenkins/.kube/config"  // Path to kubeconfig for EKS
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
+        AWS_DEFAULT_REGION = "ap-south-1"
     }
 
     stages {
-        stage('Clone Repository') {
+
+        stage('Checkout Code') {
             steps {
-                git branch: 'main', url: 'https://github.com/kalaiyarasi1511/Trend.git'
+                git branch: 'main', url: 'https://github.com/kalaiyarasi1511/Trend'
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 script {
-                    sh 'docker build -t $DOCKER_IMAGE .'
+                    sh '''
+                    docker build -t ${DOCKERHUB_CREDENTIALS_USR}/trend-app:latest .
+                    '''
                 }
             }
         }
 
-        stage('Push Docker Image to DockerHub') {
+        stage('Push to DockerHub') {
             steps {
                 script {
-                    sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
-                    sh 'docker push $DOCKER_IMAGE'
+                    sh '''
+                    echo ${DOCKERHUB_CREDENTIALS_PSW} | docker login -u ${DOCKERHUB_CREDENTIALS_USR} --password-stdin
+                    docker push ${DOCKERHUB_CREDENTIALS_USR}/trend-app:latest
+                    '''
                 }
             }
         }
@@ -34,13 +39,25 @@ pipeline {
         stage('Deploy to EKS') {
             steps {
                 script {
-                    // Write kubeconfig to file
-                    writeFile file: 'kubeconfig', text: KUBECONFIG_CREDENTIALS
-                    withEnv(["KUBECONFIG=${WORKSPACE}/kubeconfig"]) {
-                        sh 'kubectl apply -f deployment.yml'
-                    }
+                    sh '''
+                    kubectl get nodes
+                    kubectl apply -f k8s-deployment.yaml
+                    kubectl apply -f k8s-service.yaml
+                    '''
                 }
             }
+        }
+    }
+
+    post {
+        always {
+            echo "Pipeline completed."
+        }
+        failure {
+            echo "Pipeline failed!"
+        }
+        success {
+            echo "Pipeline executed successfully!"
         }
     }
 }
