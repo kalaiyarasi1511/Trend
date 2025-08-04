@@ -2,31 +2,35 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
-        KUBECONFIG = credentials('eks-kubeconfig')
+        DOCKER_IMAGE = "your-dockerhub-username/trend-app"
+        DOCKER_TAG = "latest"
     }
 
     stages {
         stage('Checkout Code') {
             steps {
-                git branch: 'main', url: 'https://github.com/kalaiyarasi1511/Trend'
+                git branch: 'main',
+                    credentialsId: 'dockerhub-creds',  // GitHub creds if private repo
+                    url: 'https://github.com/kalaiyarasi1511/Trend'
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 script {
-                    sh 'docker build -t kalaiyarasi15/trend-app:latest .'
+                    sh """
+                    docker build -t $DOCKER_IMAGE:$DOCKER_TAG .
+                    """
                 }
             }
         }
 
-        stage('Push to DockerHub') {
+        stage('Push Docker Image to DockerHub') {
             steps {
-                script {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh """
-                    echo ${DOCKERHUB_CREDENTIALS_PSW} | docker login -u ${DOCKERHUB_CREDENTIALS_USR} --password-stdin
-                    docker push kalaiyarasi15/trend-app:latest
+                    echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                    docker push $DOCKER_IMAGE:$DOCKER_TAG
                     """
                 }
             }
@@ -34,10 +38,11 @@ pipeline {
 
         stage('Deploy to EKS') {
             steps {
-                script {
+                withCredentials([file(credentialsId: 'eks-kubeconfig', variable: 'KUBECONFIG')]) {
                     sh """
                     kubectl get nodes
-                    kubectl apply -f deployment.yml
+                    kubectl apply -f k8s-deployment.yml
+                    kubectl apply -f k8s-service.yml
                     """
                 }
             }
@@ -46,10 +51,10 @@ pipeline {
 
     post {
         success {
-            echo 'Pipeline completed successfully!'
+            echo "Pipeline executed successfully!"
         }
         failure {
-            echo 'Pipeline failed!'
+            echo "Pipeline failed!"
         }
     }
 }
