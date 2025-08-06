@@ -2,6 +2,9 @@ provider "aws" {
   region = "ap-south-1"
 }
 
+# ------------------------------
+# VPC
+# ------------------------------
 resource "aws_vpc" "trend_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
@@ -11,6 +14,9 @@ resource "aws_vpc" "trend_vpc" {
   }
 }
 
+# ------------------------------
+# Subnet
+# ------------------------------
 resource "aws_subnet" "trend_subnet" {
   vpc_id                  = aws_vpc.trend_vpc.id
   cidr_block              = "10.0.1.0/24"
@@ -21,12 +27,24 @@ resource "aws_subnet" "trend_subnet" {
   }
 }
 
+# ------------------------------
+# Internet Gateway
+# ------------------------------
 resource "aws_internet_gateway" "trend_igw" {
   vpc_id = aws_vpc.trend_vpc.id
+  tags = {
+    Name = "trend-igw"
+  }
 }
 
+# ------------------------------
+# Route Table & Route
+# ------------------------------
 resource "aws_route_table" "trend_rtb" {
   vpc_id = aws_vpc.trend_vpc.id
+  tags = {
+    Name = "trend-rtb"
+  }
 }
 
 resource "aws_route" "trend_route" {
@@ -40,26 +58,17 @@ resource "aws_route_table_association" "trend_rta" {
   route_table_id = aws_route_table.trend_rtb.id
 }
 
-resource "aws_eks_cluster" "trend_cluster" {
-  name     = "trend-cluster"
-  role_arn = aws_iam_role.eks_role.arn
-  version  = "1.29"
-
-  vpc_config {
-    subnet_ids = [aws_subnet.trend_subnet.id]
-  }
-
-  depends_on = [aws_iam_role_policy_attachment.eks_policy_attach]
-}
-
+# ------------------------------
+# IAM Role for EKS Cluster
+# ------------------------------
 resource "aws_iam_role" "eks_role" {
   name = "trend-eks-role"
 
   assume_role_policy = jsonencode({
-    Version = "2012-10-17"
+    Version = "2012-10-17",
     Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
+      Action    = "sts:AssumeRole",
+      Effect    = "Allow",
       Principal = {
         Service = "eks.amazonaws.com"
       }
@@ -72,14 +81,32 @@ resource "aws_iam_role_policy_attachment" "eks_policy_attach" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
+# ------------------------------
+# EKS Cluster
+# ------------------------------
+resource "aws_eks_cluster" "trend_cluster" {
+  name     = "trend-cluster"
+  role_arn = aws_iam_role.eks_role.arn
+  version  = "1.29"
+
+  vpc_config {
+    subnet_ids = [aws_subnet.trend_subnet.id]
+  }
+
+  depends_on = [aws_iam_role_policy_attachment.eks_policy_attach]
+}
+
+# ------------------------------
+# IAM Role for EKS Nodes
+# ------------------------------
 resource "aws_iam_role" "node_role" {
   name = "trend-node-role"
 
   assume_role_policy = jsonencode({
-    Version = "2012-10-17"
+    Version = "2012-10-17",
     Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
+      Action    = "sts:AssumeRole",
+      Effect    = "Allow",
       Principal = {
         Service = "ec2.amazonaws.com"
       }
@@ -102,16 +129,21 @@ resource "aws_iam_role_policy_attachment" "node_AmazonEKS_CNI_Policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
 }
 
+# ------------------------------
+# EKS Node Group
+# ------------------------------
 resource "aws_eks_node_group" "trend_nodes" {
   cluster_name    = aws_eks_cluster.trend_cluster.name
   node_group_name = "trend-nodes"
   node_role_arn   = aws_iam_role.node_role.arn
   subnet_ids      = [aws_subnet.trend_subnet.id]
+
   scaling_config {
     desired_size = 2
     max_size     = 2
     min_size     = 1
   }
+
   depends_on = [
     aws_iam_role_policy_attachment.node_AmazonEKSWorkerNodePolicy,
     aws_iam_role_policy_attachment.node_AmazonEC2ContainerRegistryReadOnly,
@@ -119,12 +151,15 @@ resource "aws_eks_node_group" "trend_nodes" {
   ]
 }
 
+# ------------------------------
+# Jenkins EC2 Instance
+# ------------------------------
 resource "aws_instance" "jenkins_ec2" {
-  ami           = "ami-0dee22c13ea7a9a67" # Amazon Linux 2023 (ap-south-1)
-  instance_type = "t2.micro"
-  subnet_id     = aws_subnet.trend_subnet.id
+  ami                         = "ami-0dee22c13ea7a9a67" # Amazon Linux 2023 (ap-south-1)
+  instance_type               = "t2.micro"
+  subnet_id                   = aws_subnet.trend_subnet.id
   associate_public_ip_address = true
-  key_name      = "your-keypair-name"
+  key_name                    = "linux-ssh-key"
 
   user_data = <<-EOF
               #!/bin/bash
