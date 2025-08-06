@@ -2,39 +2,25 @@ provider "aws" {
   region = "ap-south-1"
 }
 
-# --------------------------
+# -----------------------
 # VPC
-# --------------------------
+# -----------------------
 resource "aws_vpc" "trend_vpc" {
   cidr_block           = "10.0.0.0/16"
-  enable_dns_hostnames = true
   enable_dns_support   = true
-  tags = {
-    Name = "trend-vpc"
-  }
+  enable_dns_hostnames = true
+  tags = { Name = "trend-vpc" }
 }
 
-# --------------------------
-# Internet Gateway
-# --------------------------
-resource "aws_internet_gateway" "trend_igw" {
-  vpc_id = aws_vpc.trend_vpc.id
-  tags = {
-    Name = "trend-igw"
-  }
-}
-
-# --------------------------
+# -----------------------
 # Subnets (Two AZs)
-# --------------------------
+# -----------------------
 resource "aws_subnet" "trend_subnet_a" {
   vpc_id                  = aws_vpc.trend_vpc.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "ap-south-1a"
   map_public_ip_on_launch = true
-  tags = {
-    Name = "trend-subnet-a"
-  }
+  tags = { Name = "trend-subnet-a" }
 }
 
 resource "aws_subnet" "trend_subnet_b" {
@@ -42,19 +28,20 @@ resource "aws_subnet" "trend_subnet_b" {
   cidr_block              = "10.0.2.0/24"
   availability_zone       = "ap-south-1b"
   map_public_ip_on_launch = true
-  tags = {
-    Name = "trend-subnet-b"
-  }
+  tags = { Name = "trend-subnet-b" }
 }
 
-# --------------------------
-# Route Table
-# --------------------------
+# -----------------------
+# Internet Gateway & Route
+# -----------------------
+resource "aws_internet_gateway" "trend_igw" {
+  vpc_id = aws_vpc.trend_vpc.id
+  tags   = { Name = "trend-igw" }
+}
+
 resource "aws_route_table" "trend_rtb" {
   vpc_id = aws_vpc.trend_vpc.id
-  tags = {
-    Name = "trend-rtb"
-  }
+  tags   = { Name = "trend-rtb" }
 }
 
 resource "aws_route" "trend_route" {
@@ -73,19 +60,18 @@ resource "aws_route_table_association" "trend_rta_b" {
   route_table_id = aws_route_table.trend_rtb.id
 }
 
-# --------------------------
-# IAM Roles for EKS
-# --------------------------
+# -----------------------
+# IAM Roles
+# -----------------------
 resource "aws_iam_role" "eks_role" {
   name = "trend-eks-role"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "eks.amazonaws.com"
-      }
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "eks.amazonaws.com" }
     }]
   })
 }
@@ -97,14 +83,13 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 
 resource "aws_iam_role" "node_role" {
   name = "trend-node-role"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      }
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
     }]
   })
 }
@@ -119,53 +104,51 @@ resource "aws_iam_role_policy_attachment" "node_policies" {
   policy_arn = each.value
 }
 
-# --------------------------
+# -----------------------
 # EKS Cluster
-# --------------------------
+# -----------------------
 resource "aws_eks_cluster" "trend_cluster" {
   name     = "trend-cluster"
   role_arn = aws_iam_role.eks_role.arn
   version  = "1.29"
 
   vpc_config {
-    subnet_ids = [
-      aws_subnet.trend_subnet_a.id,
-      aws_subnet.trend_subnet_b.id
-    ]
+    subnet_ids         = [aws_subnet.trend_subnet_a.id, aws_subnet.trend_subnet_b.id]
     endpoint_public_access = true
   }
+
+  depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
 }
 
-# --------------------------
+# -----------------------
 # EKS Node Group
-# --------------------------
+# -----------------------
 resource "aws_eks_node_group" "trend_nodes" {
   cluster_name    = aws_eks_cluster.trend_cluster.name
   node_group_name = "trend-nodes"
   node_role_arn   = aws_iam_role.node_role.arn
-  subnet_ids      = [
-    aws_subnet.trend_subnet_a.id,
-    aws_subnet.trend_subnet_b.id
-  ]
+  subnet_ids      = [aws_subnet.trend_subnet_a.id, aws_subnet.trend_subnet_b.id]
+
   scaling_config {
     desired_size = 2
     max_size     = 2
     min_size     = 1
   }
+
+  depends_on = [aws_eks_cluster.trend_cluster]
 }
 
-# --------------------------
-# Jenkins EC2
-# --------------------------
+# -----------------------
+# Jenkins EC2 Instance
+# -----------------------
 resource "aws_instance" "jenkins_ec2" {
-  ami                    = "ami-0dee22c13ea7a9a67"
+  ami                    = "ami-0dee22c13ea7a9a67" # Amazon Linux 2023
   instance_type          = "t2.micro"
   key_name               = "linux-ssh-key"
   subnet_id              = aws_subnet.trend_subnet_a.id
   associate_public_ip_address = true
-  tags = {
-    Name = "trend-jenkins"
-  }
+
+  tags = { Name = "trend-jenkins" }
 
   user_data = <<-EOT
     #!/bin/bash
@@ -180,20 +163,5 @@ resource "aws_instance" "jenkins_ec2" {
     systemctl enable jenkins
     systemctl start jenkins
   EOT
-}
-
-# --------------------------
-# Outputs
-# --------------------------
-output "eks_cluster_name" {
-  value = aws_eks_cluster.trend_cluster.name
-}
-
-output "eks_cluster_endpoint" {
-  value = aws_eks_cluster.trend_cluster.endpoint
-}
-
-output "jenkins_ec2_public_ip" {
-  value = aws_instance.jenkins_ec2.public_ip
 }
 
