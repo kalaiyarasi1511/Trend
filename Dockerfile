@@ -1,18 +1,14 @@
-# Use Nginx as the base image
+# Use lightweight Nginx image
 FROM nginx:alpine
 
-# Remove default Nginx static content
+# Remove default Nginx website
 RUN rm -rf /usr/share/nginx/html/*
 
-# Copy build files from dist folder to Nginx HTML directory
+# Copy build output to Nginx html directory
 COPY dist/ /usr/share/nginx/html/
 
-# Update Nginx config to listen on port 3000 on all IPs
-RUN sed -i 's/listen       80;/listen       3000;/' /etc/nginx/conf.d/default.conf \
- && sed -i 's/listen  \[::\]:80;/listen  [::]:3000;/' /etc/nginx/conf.d/default.conf
+# Expose port 80 (container will listen here)
+EXPOSE 80
 
-# Expose port 3000
-EXPOSE 3000
-
-# Start Nginx
+# Start Nginx in foreground
 CMD ["nginx", "-g", "daemon off;"]
