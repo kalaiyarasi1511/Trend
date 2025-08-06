@@ -2,21 +2,21 @@ provider "aws" {
   region = "ap-south-1"
 }
 
-# VPC
+# ---------------- VPC ----------------
 resource "aws_vpc" "trend_vpc" {
   cidr_block           = "10.0.0.0/16"
-  enable_dns_hostnames = true
   enable_dns_support   = true
+  enable_dns_hostnames = true
 
   tags = {
     Name = "trend-vpc"
   }
 }
 
-# Subnets
+# ---------------- Subnets in 2 AZs ----------------
 resource "aws_subnet" "trend_subnet_a" {
   vpc_id                  = aws_vpc.trend_vpc.id
-  cidr_block              = "10.0.10.0/24"
+  cidr_block              = "10.0.1.0/24"
   availability_zone       = "ap-south-1a"
   map_public_ip_on_launch = true
 
@@ -27,7 +27,7 @@ resource "aws_subnet" "trend_subnet_a" {
 
 resource "aws_subnet" "trend_subnet_b" {
   vpc_id                  = aws_vpc.trend_vpc.id
-  cidr_block              = "10.0.20.0/24"
+  cidr_block              = "10.0.2.0/24"
   availability_zone       = "ap-south-1b"
   map_public_ip_on_launch = true
 
@@ -36,7 +36,7 @@ resource "aws_subnet" "trend_subnet_b" {
   }
 }
 
-# Internet Gateway
+# ---------------- Internet Gateway ----------------
 resource "aws_internet_gateway" "trend_igw" {
   vpc_id = aws_vpc.trend_vpc.id
 
@@ -45,18 +45,19 @@ resource "aws_internet_gateway" "trend_igw" {
   }
 }
 
-# Route Table
+# ---------------- Route Table ----------------
 resource "aws_route_table" "trend_rtb" {
   vpc_id = aws_vpc.trend_vpc.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.trend_igw.id
-  }
 
   tags = {
     Name = "trend-rtb"
   }
+}
+
+resource "aws_route" "trend_route" {
+  route_table_id         = aws_route_table.trend_rtb.id
+  destination_cidr_block = "0.0.0.0/0"
+  gateway_id             = aws_internet_gateway.trend_igw.id
 }
 
 resource "aws_route_table_association" "trend_rta_a" {
@@ -69,16 +70,21 @@ resource "aws_route_table_association" "trend_rta_b" {
   route_table_id = aws_route_table.trend_rtb.id
 }
 
-# IAM Roles for EKS
+# ---------------- EKS Cluster IAM Role ----------------
 resource "aws_iam_role" "eks_role" {
   name = "trend-eks-role"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = { Service = "eks.amazonaws.com" }
-    }]
+    Statement = [
+      {
+        Action    = "sts:AssumeRole"
+        Effect    = "Allow"
+        Principal = {
+          Service = "eks.amazonaws.com"
+        }
+      }
+    ]
   })
 }
 
@@ -87,57 +93,70 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
+# ---------------- Node IAM Role ----------------
 resource "aws_iam_role" "node_role" {
   name = "trend-node-role"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = { Service = "ec2.amazonaws.com" }
-    }]
+    Statement = [
+      {
+        Action    = "sts:AssumeRole"
+        Effect    = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
   })
+}
+
+# Delay for IAM propagation
+resource "time_sleep" "wait_for_iam" {
+  depends_on      = [aws_iam_role.node_role]
+  create_duration = "15s"
 }
 
 resource "aws_iam_role_policy_attachment" "node_role_policy1" {
   role       = aws_iam_role.node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  depends_on = [time_sleep.wait_for_iam]
 }
 
 resource "aws_iam_role_policy_attachment" "node_role_policy2" {
   role       = aws_iam_role.node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  depends_on = [time_sleep.wait_for_iam]
 }
 
 resource "aws_iam_role_policy_attachment" "node_role_policy3" {
   role       = aws_iam_role.node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  depends_on = [time_sleep.wait_for_iam]
 }
 
-# EKS Cluster
+# ---------------- EKS Cluster ----------------
 resource "aws_eks_cluster" "trend_cluster" {
   name     = "trend-cluster"
   role_arn = aws_iam_role.eks_role.arn
+  version  = "1.29"
 
   vpc_config {
-    subnet_ids = [
-      aws_subnet.trend_subnet_a.id,
-      aws_subnet.trend_subnet_b.id
-    ]
+    subnet_ids         = [aws_subnet.trend_subnet_a.id, aws_subnet.trend_subnet_b.id]
+    endpoint_public_access = true
   }
 
-  depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_cluster_policy
+  ]
 }
 
-# EKS Node Group
+# ---------------- EKS Node Group ----------------
 resource "aws_eks_node_group" "trend_nodes" {
   cluster_name    = aws_eks_cluster.trend_cluster.name
   node_group_name = "trend-nodes"
   node_role_arn   = aws_iam_role.node_role.arn
-  subnet_ids      = [
-    aws_subnet.trend_subnet_a.id,
-    aws_subnet.trend_subnet_b.id
-  ]
+  subnet_ids      = [aws_subnet.trend_subnet_a.id, aws_subnet.trend_subnet_b.id]
 
   scaling_config {
     desired_size = 2
@@ -152,30 +171,30 @@ resource "aws_eks_node_group" "trend_nodes" {
   ]
 }
 
-# Jenkins EC2
+# ---------------- Jenkins EC2 ----------------
 resource "aws_instance" "jenkins_ec2" {
-  ami           = "ami-0dee22c13ea7a9a67"
-  instance_type = "t2.micro"
-  key_name      = "linux-ssh-key"
-  subnet_id     = aws_subnet.trend_subnet_a.id
+  ami                         = "ami-0dee22c13ea7a9a67" # Amazon Linux 2023
+  instance_type               = "t2.micro"
+  subnet_id                   = aws_subnet.trend_subnet_a.id
   associate_public_ip_address = true
+  key_name                    = "linux-ssh-key"
 
   tags = {
     Name = "trend-jenkins"
   }
 
   user_data = <<-EOT
-    #!/bin/bash
-    yum update -y
-    yum install -y java-17-amazon-corretto docker git
-    systemctl enable docker
-    systemctl start docker
-    usermod -aG docker ec2-user
-    amazon-linux-extras enable jenkins
-    amazon-linux-extras install epel -y
-    yum install -y jenkins
-    systemctl enable jenkins
-    systemctl start jenkins
-  EOT
+              #!/bin/bash
+              yum update -y
+              yum install -y java-17-amazon-corretto docker git
+              systemctl enable docker
+              systemctl start docker
+              usermod -aG docker ec2-user
+              amazon-linux-extras enable jenkins
+              amazon-linux-extras install epel -y
+              yum install -y jenkins
+              systemctl enable jenkins
+              systemctl start jenkins
+            EOT
 }
 
